@@ -4,6 +4,8 @@ open Util
 open Matcher
 open Sll
 
+exception Translation_error of string
+
 let ident = ostap (n:IDENT {Token.repr n})
 let cnt = ostap (c:CNT {Token.repr c})
 
@@ -11,33 +13,40 @@ let list_of_opt = function
   | Some xs -> xs
   | None    -> []
 
-let resolveRule name pat args body =
-  match pat with
-  | (`PArg pname)          -> `FRule (name >$ (pname::args) >= body)
-  | (`PCtr (pname, pargs)) -> `DPGRule (name, pat, args, body)
+let to_arg = function
+  | Some x -> x
+  | None   -> `Empty
 
-let rec toSLL acc gn p a b =
-  let toId x = 
+let resolve_rule name pat args body =
+  match pat with
+  | `PArg pname          -> `FRule (name >$ (pname :: args) >= body)
+  | `PCtr (pname, pargs) -> `DPGRule (name, pat, args, body)
+  | `Empty -> `FRule (name >$ [] >= body)
+
+let rec toSLL acc gn p gargs b =
+  let to_id x = 
     match x with
     | `PArg n -> n
-    | `PCtr (n, a) -> (String.lowercase n) ^ "_arg" in
-  let rec idlist x = List.map toId x in
-  let rec varlist x = List.map (fun n -> `Var (toId n)) x in
+    | `PCtr (n, _) -> (String.lowercase n) ^ "_arg"
+    | `Empty -> raise (Translation_error ("")) in
+  let rec id_list x = List.map to_id x in
+  let rec var_list x = List.map (fun n -> `Var (to_id n)) x in
     match p with
-     | `PCtr (n, ((`PArg n1 :: xs) as pargs))      -> `GRule (gn $ (n +> (idlist pargs), a) => b) :: acc
-     | `PCtr (n, [])                               -> `GRule (gn $ (n +> [], a) => b) :: acc
      | `PCtr (n, ((`PCtr (n1, l) :: xs) as pargs)) -> 
-       let body_args = (varlist pargs) @ (List.map (fun n -> `Var n) a) in 
+       let body_args = (var_list pargs) @ (List.map (fun n -> `Var n) gargs) in 
        let new_gname = (gn ^ "_" ^ n) in
-       let new_def = `GRule (gn $ (n +> (idlist pargs), a) => (`FCall (new_gname, body_args))) in
-         toSLL (new_def :: acc) new_gname (`PCtr (n1,l)) ((idlist xs) @ a) b
-     | (`PArg name)                   -> [] (*exception*)
+       let new_def = `GRule (gn $ (n +> (id_list pargs), gargs) => (`FCall (new_gname, body_args))) in
+         toSLL (new_def :: acc) new_gname (`PCtr (n1,l)) ((id_list xs) @ gargs) b
+     | `PCtr (n, pargs)      -> `GRule (gn $ (n +> (id_list pargs), gargs) => b) :: acc
+     | `PArg name            -> raise (Translation_error (""))
+     | `Empty            -> raise (Translation_error (""))
 
-let rec elim_deep_pat x = 
-  match x with
-  | `FRule (fn, b) :: smth -> (`FRule (fn, b) :: (elim_deep_pat smth))
-  | `DPGRule (gn, p, a, b) :: smth -> (toSLL [] gn p a b) @ (elim_deep_pat smth)
-  | [] -> []
+
+let elim_deep_pat x =
+  let elim_helper = function
+    | `FRule (fn, b) -> [`FRule (fn, b)]
+    | `DPGRule (gn, p, a, b) -> (toSLL [] gn p a b) in
+List.concat (List.map elim_helper x)
 
 let defs_splitter xs =
   let rec helper defs fdefs gdefs =
@@ -49,18 +58,15 @@ let defs_splitter xs =
 
 ostap (
   program_parser[e_parser][dp_parser]:
-    defs:(funDef[e_parser][dp_parser])* -"." term:expression[e_parser] {
+    defs:(fun_def[e_parser][dp_parser])* -"." term:expression[e_parser] {
       let (fdefs, gdefs) = defs_splitter (elim_deep_pat defs) in
       make_program fdefs gdefs term
     }
   ;
-  funDef[e_parser][dp_parser]:
-    rule[e_parser][dp_parser]
-  ;
-  rule[e_parser][dp_parser]:
-    name:ident -"(" pat:deep_pat[dp_parser] gargs:(-"," ident)* -")"
+  fun_def[e_parser][dp_parser]:
+    name:ident -"(" pat:(deep_pat[dp_parser])? gargs:(-"," ident)* -")"
         -"=" gbody:e_parser
-    { resolveRule name pat gargs gbody }
+    { resolve_rule name (to_arg pat) gargs gbody }
   ;
   args_list[e_parser]: -"(" list0[e_parser] -")"
   ;
@@ -73,7 +79,7 @@ ostap (
   ;
   expression[e_parser]:
       constructor[e_parser]
-    | funCall[e_parser]
+    | fun_call[e_parser]
     | v:ident  { `Var v }
   ;
   ident_ctr_args:
@@ -83,7 +89,7 @@ ostap (
     cname:cnt  args:args_list[e_parser]?
     { `Ctr cname (list_of_opt args) }
   ;
-  funCall[e_parser]:
+  fun_call[e_parser]:
     name:ident args:args_list[e_parser]
     { `FCall (name, args) }
 )
@@ -132,11 +138,12 @@ let parse source_text cont =
       printf "Parser error:\n%s\n" (Reason.toString (`First 5) `Acc reason))
 
 let example =
-    "isOne(S(S(x, y),a))=F(x,y,a)\n"
-  ^ "isOne(S(Z, b))=T\n"
-  ^ "isOne(Z)=T\n"
+    "g(S(S(x, y),a))=F(x,y,a)\n"
+  ^ "g(S(Z, b))=T\n"
+  ^ "g(Z)=T\n"
+  ^ "f()=S(S(X,Y),A)\n"
   ^ ".\n"
-  ^ "isOne(S(S(X, Y), A)))"
+  ^ "g(f())"
 
 let big_example = string_of_program string_of_pure Arithm.program
 
