@@ -21,7 +21,7 @@ CAMLC_FLAGS = \
 CAMLD_FLAGS = \
 	-rectypes
 
-deep_pat_test: deep_pat.cmx deep_pat_test.cmx
+deep_pat_test: deep_pattern.cmx parser.cmx deep_pat_test.cmx
 	${CAMLC} ${INCLUDE} ${CAMLD_FLAGS} ${LIBS} $^ -o $@
 
 .SUFFIXES: .ml .cmx

@@ -1,2 +1,2 @@
 let () =
-  Deep_pat.big_test ()
+  Parser.big_test ()
