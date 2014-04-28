@@ -10,23 +10,22 @@ let cnt = ostap (c:CNT {Token.repr c})
 
 let list_of_opt = function
   | Some xs -> xs
-  | None    -> []
+  | None -> []
 
 let resolve_rule name pat body =
   let to_id = function
     | `PArg pn -> pn
-    | _ -> raise (Translation_error ("")) in
-  let is_g = List.exists is_PCtr pat in
-    match is_g with
-      | true  -> `DPGRule (name, [`PCtr ("AllArgs", pat)], body)
-      | false -> `FRule (name >$ (List.map to_id pat) >= body)
+    | _ -> raise (Translation_error "") in
+  if List.for_all is_PArg pat
+  then `FRule (name >$ (List.map to_id pat) >= body)
+  else `DPGRule (name, [`PCtr ("AllArgs", pat)], body)
     
 let defs_splitter xs =
   let rec helper defs fdefs gdefs =
     match defs with
-    | (`FRule (fn, b) :: smth)     -> helper smth ((fn, b) :: fdefs) gdefs
+    | (`FRule (fn, b) :: smth) -> helper smth ((fn, b) :: fdefs) gdefs
     | (`GRule (gn, pn, b) :: smth) -> helper smth fdefs ((gn, pn, b) :: gdefs)
-    | []                           -> (fdefs, gdefs)
+    | [] -> (fdefs, gdefs)
   in helper xs [] []
 
 ostap (
@@ -43,23 +42,23 @@ ostap (
   ;
   args_list[e_parser]: -"(" list0[e_parser] -")"
   ;
-  deep_pat[dp_parser]: 
+  deep_pat[dp_parser]:
       name:ident {`PArg name}
-    | pname:cnt pargs:dp_args[dp_parser]  {`PCtr (pname, pargs)}
+    | pname:cnt pargs:dp_args[dp_parser] {`PCtr (pname, pargs)}
   ;
-  dp_args[dp_parser]: 
+  dp_args[dp_parser]:
     pargs:(-"(" list0[dp_parser] -")")? { list_of_opt pargs }
   ;
   expression[e_parser]:
       constructor[e_parser]
     | fun_call[e_parser]
-    | v:ident  { `Var v }
+    | v:ident { `Var v }
   ;
   ident_ctr_args:
     pargs:(-"(" list0[ident] -")")? { list_of_opt pargs }
   ;
   constructor[e_parser]:
-    cname:cnt  args:args_list[e_parser]?
+    cname:cnt args:args_list[e_parser]?
     { `Ctr cname (list_of_opt args) }
   ;
   fun_call[e_parser]:
@@ -68,7 +67,7 @@ ostap (
 )
 
 class lexer s =
-  let skip  = Skip.create [Skip.whitespaces " \n\t\r"] in
+  let skip = Skip.create [Skip.whitespaces " \n\t\r"] in
   let ident = Str.regexp "[a-z][a-zA-Z0-9]*" in
   let cnt = Str.regexp "[A-Z][a-zA-Z0-9]*" in
   object (self)
@@ -77,7 +76,7 @@ class lexer s =
 
     method skip p c = skip s p c
     method getIDENT = self#get "identifier" ident
-    method getCNT   = self#get "constructor" cnt
+    method getCNT = self#get "constructor" cnt
 
   end
 
@@ -86,7 +85,7 @@ let rec dp_parser xs = deep_pat dp_parser xs
 let program_parser = program_parser pure_parser dp_parser
 
 let rec to_AllArgs = function
-  | `GCall (gname, parg, gargs) -> 
+  | `GCall (gname, parg, gargs) ->
        `GCall (gname, `Ctr ("AllArgs", ((to_AllArgs parg) :: (List.map to_AllArgs gargs))), [])
   | x -> x
   
@@ -121,10 +120,12 @@ let example =
   ^ "g(Z, A, c)=T(c,c,c)\n"
   ^ "g(Z, Z, c)=T(c,c,c)\n"
   ^ "g(Z, H, C(A))=T(z,z,z)\n"
+  ^ "lk(z, H, C(A))=T(z,z,z)\n"
   ^ "f()=K(S(X,Y),O,S(Z, S(Z1, Z2)))\n"
   ^ "f1()=K(Z,L,B)\n"
+  ^ "f2(a)=K(Z,L,B)\n"
   ^ ".\n"
-  ^ "g(f(), L, A(A))" 
+  ^ "g(f(), L, A(A))"
 
 let big_example = string_of_program string_of_pure Arithm.program
 
