@@ -1,18 +1,20 @@
+open Printf
 open Ostap
 open Util
 open Matcher
 open Sll
+open Parser
 open List
 
 exception Translation_error of string
 
+let get_PCtr_args = function
+  | `PCtr(n, pa) -> pa
+  | _ -> raise (Translation_error (""))
+
 let is_PArg = function
   | (`PCtr _) -> false
   | (`PArg _) -> true
-
-let get_PCtr_args = function
- | `PCtr(n, pa) -> pa
- | _ -> raise (Translation_error (""))
     
 let divide_by_name x =
   let module M = Map.Make (struct type t = string * string include Pervasives end) in
@@ -93,5 +95,73 @@ let elim_deep_pat x =
               ([], []) 
               x
   in
-  concat (fs :: (map to_SLL (divide_by_name gs)))
+  (fs :: (map to_SLL (divide_by_name gs)))
 
+let resolve_rule name pat body =
+  let to_id = function
+    | `PArg pn -> pn
+    | _ -> raise (Translation_error "") in
+  if List.for_all is_PArg pat
+  then `FRule (name >$ (List.map to_id pat) >= body)
+  else `DPGRule (name, [`PCtr ("AllArgs", pat)], body)
+
+ostap (
+  dp_g_rule[expr_parser][dp_parser]:
+    name:ident -"(" pat:list0[dp_parser] -")"
+        -"=" gbody:expr_parser
+    { resolve_rule name pat gbody }
+  ;
+  deep_pat[dp_parser]: 
+      name:ident { `PArg name }
+    | pname:cnt pargs:dp_args[dp_parser]  { `PCtr (pname, pargs) }
+  ;
+  dp_args[dp_parser]: 
+    pargs:(-"(" list0[dp_parser] -")")? { list_of_opt pargs }
+  )
+
+ostap (
+  dp_decl[expr_parser][dp_parser]: 
+    defs: (dp_g_rule[expr_parser][dp_parser])* {elim_deep_pat defs}
+)
+
+let rec dp_parser xs = deep_pat dp_parser xs
+let rec dp_decl_parser = dp_decl pure_expr_parser dp_parser
+let dp_program_parser = program_parser dp_decl_parser pure_term_pure_expr_parser
+
+let rec to_AllArgs = function
+  | `GCall (gname, parg, gargs) ->
+       `GCall (gname, `Ctr ("AllArgs", ((to_AllArgs parg) :: (List.map to_AllArgs gargs))), [])
+  | x -> x
+
+let parse source_text cont =
+  Combinators.unwrap (dp_program_parser (new lexer source_text))
+    (fun program -> cont (resolve_gcalls to_AllArgs program))
+    (fun reason ->
+      printf "Parser error:\n%s\n" (Reason.toString (`First 5) `Acc reason))
+
+let example =
+ "g(K(S(x, y), o, S(z, S(z1, z2))), l, A(a))=F(x,y,o,z,z1,z2,l,a)\n"
+  ^ "g(K(Z, l, b), a, M(o))=T(a,b,o)\n"
+  ^ "g(Z, A, c)=T(c,c,c)\n"
+  ^ "g(Z, Z, c)=T(c,c,c)\n"
+  ^ "g(Z, H, C(A))=T(z,z,z)\n"
+  ^ "lk(z, H, C(A))=T(z,z,z)\n"
+  ^ "f()=K(S(X,Y),O,S(Z, S(Z1, Z2)))\n"
+  ^ "f1()=K(Z,L,B)\n"
+  ^ "f2(a)=K(Z,L,B)\n"
+  ^ ".\n"
+  ^ "g(f(), L, A(A))"
+
+let verbose_test () =
+  Combinators.unwrap (dp_program_parser (new lexer example))
+    (fun program ->
+      printf "Parsed program:\n%s\n" (string_of_program string_of_pure program))
+    (fun reason ->
+      printf "Parser error:\n%s\n" (Reason.toString (`First 3) `Acc reason))
+
+let big_test () =
+  Combinators.unwrap (dp_program_parser (new lexer example))
+    (fun program ->
+       let result = Interpret.run (resolve_gcalls to_AllArgs program) in
+       printf "%s\n" (string_of_pure result))
+    (fun _ -> ())

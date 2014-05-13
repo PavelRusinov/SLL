@@ -1,2 +1,2 @@
 let () =
-  Parser.big_test ()
+  Parser.verbose_test ()

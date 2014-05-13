@@ -1,3 +1,3 @@
 let () = begin
-  Parser.verbose_test ();
-  Parser.big_test () end
+  Deep_pat.verbose_test ();
+  Deep_pat.big_test () end
